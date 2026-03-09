@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+data/corpus.txt
+data/tokens.npy
+data/prompt.txt
+data/result.txt
+checkpoints/
+*.pt
