@@ -20,9 +20,9 @@ from model import build_model
 _base = os.path.dirname(os.path.abspath(__file__))
 app = Flask(__name__, template_folder=os.path.join(_base, "templates"))
 
-HF_REPO   = "Imdmueybbdynudmi/PedusGPT1"
-_tok      = None
-_model    = None
+HF_REPO = "Imdmueybbdynudmi/PedusGPT1"
+_tok    = None
+_model  = None
 
 
 def download_model():
@@ -78,9 +78,9 @@ def api_status():
 def api_generate():
     data        = request.get_json()
     prompt      = data.get("prompt", "the")
-    max_tokens  = int(data.get("max_tokens",    100))
+    max_tokens  = int(data.get("max_tokens", 100))
     temperature = float(data.get("temperature", 0.8))
-    top_k       = int(data.get("top_k",          40))
+    top_k       = int(data.get("top_k", 40))
 
     if not isinstance(prompt, str) or not prompt.strip():
         prompt = "the"
@@ -93,8 +93,7 @@ def api_generate():
         if not ids:
             ids = tok.encode("the", add_special=True)
 
-        cur   = torch.tensor([ids], dtype=torch.long)
-        words = []
+        cur = torch.tensor([ids], dtype=torch.long)
 
         with torch.no_grad():
             for _ in range(max_tokens):
@@ -107,12 +106,11 @@ def api_generate():
                 nxt      = torch.multinomial(probs, 1)
                 token_id = nxt.item()
                 cur      = torch.cat([cur, nxt], dim=1)
-                words.append(tok.decode([token_id]))
                 if token_id == tok.eos_id:
                     break
 
         all_new = cur[0].tolist()[len(ids):]
-return jsonify({"text": tok.decode(all_new), "done": True})
+        return jsonify({"text": tok.decode(all_new), "done": True})
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -133,7 +131,8 @@ def api_chat_save():
             except: chats = {}
 
     chats[chat_id] = {
-        "id": chat_id, "title": title,
+        "id": chat_id,
+        "title": title,
         "date": datetime.datetime.now().strftime("%d/%m/%Y %H:%M"),
         "messages": messages,
     }
@@ -152,8 +151,12 @@ def api_chat_list():
         except: return jsonify([])
     result = []
     for c in reversed(list(chats.values())):
-        result.append({"id": c["id"], "title": c.get("title", "Chat"),
-                       "date": c.get("date", ""), "messages": len(c.get("messages", []))})
+        result.append({
+            "id": c["id"],
+            "title": c.get("title", "Chat"),
+            "date": c.get("date", ""),
+            "messages": len(c.get("messages", [])),
+        })
     return jsonify(result)
 
 
