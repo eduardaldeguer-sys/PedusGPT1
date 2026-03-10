@@ -111,7 +111,8 @@ def api_generate():
                 if token_id == tok.eos_id:
                     break
 
-        return jsonify({"text": " ".join(words), "done": True})
+        all_new = cur[0].tolist()[len(ids):]
+return jsonify({"text": tok.decode(all_new), "done": True})
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
