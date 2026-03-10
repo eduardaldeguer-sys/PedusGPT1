@@ -1,42 +1,64 @@
 """
 PedusGPT Beta 1 — Servidor web publico para Render
-Solo chat, sin panel de admin
 """
 
 import os
 import json
-import subprocess
-import sys
+import datetime
+import uuid
 from pathlib import Path
 
 import torch
+import torch.nn.functional as F
 from flask import Flask, render_template, request, jsonify
 from huggingface_hub import hf_hub_download
 
 import config
 from tokenizer import BPETokenizer
+from model import build_model
 
 _base = os.path.dirname(os.path.abspath(__file__))
 app = Flask(__name__, template_folder=os.path.join(_base, "templates"))
 
-HF_REPO = "Imdmueybbdynudmi/PedusGPT1"
+HF_REPO   = "Imdmueybbdynudmi/PedusGPT1"
+_tok      = None
+_model    = None
+
 
 def download_model():
-    """Descarga modelo y tokenizador de HuggingFace si no existen."""
     os.makedirs("data", exist_ok=True)
     os.makedirs("checkpoints", exist_ok=True)
 
     if not os.path.exists(config.TOKENIZER_PATH):
         print("[Web] Descargando tokenizador...")
-        hf_hub_download(repo_id=HF_REPO, filename="data/tokenizer.json",
-                        local_dir=".")
+        hf_hub_download(repo_id=HF_REPO, filename="data/tokenizer.json", local_dir=".")
         print("[Web] Tokenizador descargado")
 
-    ckpt = "checkpoints/step_020000.pt"
+    ckpt = "checkpoints/step_050000.pt"
     if not os.path.exists(ckpt):
-        print("[Web] Descargando modelo (puede tardar)...")
+        print("[Web] Descargando modelo...")
         hf_hub_download(repo_id=HF_REPO, filename=ckpt, local_dir=".")
         print("[Web] Modelo descargado")
+
+
+def get_tok():
+    global _tok
+    if _tok is None:
+        _tok = BPETokenizer()
+        _tok.load(config.TOKENIZER_PATH)
+    return _tok
+
+
+def get_model():
+    global _model
+    if _model is None:
+        tok = get_tok()
+        _model = build_model(vocab_size=len(tok))
+        ckpt = torch.load("checkpoints/step_050000.pt", map_location="cpu", weights_only=False)
+        _model.load_state_dict(ckpt["model"])
+        _model.eval()
+    return _model
+
 
 # Descargar al arrancar
 download_model()
@@ -49,12 +71,7 @@ def index():
 
 @app.route("/api/status")
 def api_status():
-    ckpts = sorted(Path("checkpoints").glob("step_*.pt"))
-    return jsonify({
-        "has_model":   bool(ckpts),
-        "latest_step": 20000,
-        "training":    False,
-    })
+    return jsonify({"has_model": True, "latest_step": 50000, "training": False})
 
 
 @app.route("/api/generate", methods=["POST"])
@@ -65,40 +82,43 @@ def api_generate():
     temperature = float(data.get("temperature", 0.8))
     top_k       = int(data.get("top_k",          40))
 
-    ckpts = sorted(Path("checkpoints").glob("step_*.pt"))
-    if not ckpts:
-        return jsonify({"error": "Modelo no disponible"}), 400
-
-    prompt_file = os.path.join(_base, "data", "prompt.txt")
-    if os.path.exists(os.path.join(_base, "data", "result.txt")):
-        os.remove(os.path.join(_base, "data", "result.txt"))
-
-    with open(prompt_file, "w", encoding="utf-8") as f:
-        f.write(json.dumps({
-            "prompt": prompt, "max_tokens": max_tokens,
-            "temperature": temperature, "top_k": top_k
-        }))
+    if not isinstance(prompt, str) or not prompt.strip():
+        prompt = "the"
 
     try:
-        proc = subprocess.run(
-            [sys.executable, os.path.join(_base, "generate.py")],
-            capture_output=True, text=True, timeout=120, cwd=_base
-        )
-        text  = proc.stdout.strip()
-        lines = [l for l in text.split("\n") if not l.startswith("[") and not l.startswith("  [")]
-        text  = " ".join(lines).strip()
-        if not text:
-            return jsonify({"error": proc.stderr or "Sin respuesta"}), 500
-        return jsonify({"text": text, "done": True})
-    except subprocess.TimeoutExpired:
-        return jsonify({"error": "Timeout"}), 500
+        tok   = get_tok()
+        model = get_model()
+
+        ids = tok.encode(prompt.strip(), add_special=True)
+        if not ids:
+            ids = tok.encode("the", add_special=True)
+
+        cur   = torch.tensor([ids], dtype=torch.long)
+        words = []
+
+        with torch.no_grad():
+            for _ in range(max_tokens):
+                cond = cur[:, -config.BLOCK_SIZE:]
+                logits, _ = model(cond)
+                logits = logits[:, -1, :] / max(temperature, 1e-5)
+                v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
+                logits[logits < v[:, [-1]]] = float("-inf")
+                probs    = F.softmax(logits, dim=-1)
+                nxt      = torch.multinomial(probs, 1)
+                token_id = nxt.item()
+                cur      = torch.cat([cur, nxt], dim=1)
+                words.append(tok.decode([token_id]))
+                if token_id == tok.eos_id:
+                    break
+
+        return jsonify({"text": " ".join(words), "done": True})
+
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/chat/save", methods=["POST"])
 def api_chat_save():
-    import uuid, datetime
     data     = request.get_json()
     chat_id  = data.get("id") or str(uuid.uuid4())[:8]
     messages = data.get("messages", [])
@@ -131,8 +151,8 @@ def api_chat_list():
         except: return jsonify([])
     result = []
     for c in reversed(list(chats.values())):
-        result.append({"id": c["id"], "title": c.get("title","Chat"),
-                       "date": c.get("date",""), "messages": len(c.get("messages",[]))})
+        result.append({"id": c["id"], "title": c.get("title", "Chat"),
+                       "date": c.get("date", ""), "messages": len(c.get("messages", []))})
     return jsonify(result)
 
 
@@ -140,7 +160,7 @@ def api_chat_list():
 def api_chat_get(chat_id):
     chats_file = os.path.join(_base, "data", "chats.json")
     if not os.path.exists(chats_file):
-        return jsonify({"error": "No found"}), 404
+        return jsonify({"error": "Not found"}), 404
     with open(chats_file, "r", encoding="utf-8") as f:
         chats = json.load(f)
     if chat_id not in chats:
