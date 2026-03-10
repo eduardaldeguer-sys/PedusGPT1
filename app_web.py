@@ -78,7 +78,7 @@ def api_status():
 def api_generate():
     data        = request.get_json()
     prompt      = data.get("prompt", "the")
-    max_tokens  = int(data.get("max_tokens", 100))
+    max_tokens  = int(data.get("max_tokens", 300))
     temperature = float(data.get("temperature", 0.8))
     top_k       = int(data.get("top_k", 40))
 
@@ -106,8 +106,6 @@ def api_generate():
                 nxt      = torch.multinomial(probs, 1)
                 token_id = nxt.item()
                 cur      = torch.cat([cur, nxt], dim=1)
-                if token_id == tok.eos_id:
-                    break
 
         all_new = cur[0].tolist()[len(ids):]
         return jsonify({"text": tok.decode(all_new), "done": True})
