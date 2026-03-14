@@ -144,12 +144,8 @@ def get_block_size(version="v1.0"):
 #  ARRANQUE — descargar y precargar v1.0
 # ═══════════════════════════════════════════════════════════════
 
+# Solo descarga los archivos, NO carga el modelo en memoria
 download_all()
-
-try:
-    get_model_v10()
-except Exception as e:
-    print(f"[Web] ⚠ Error cargando v1.0 al arrancar: {e}")
 
 
 # ═══════════════════════════════════════════════════════════════
